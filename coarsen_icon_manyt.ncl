@@ -32,17 +32,29 @@ load "func_geostrophic.ncl"
 begin
 
   ;===================================;
-  ; define paths to input variables   ;
+  ; check input information from CLI  ;
   ;===================================;
 
+    if (.not. isdefined("datein") .or. \
+        .not. isdefined("hourin")) then
+      print("usage: ncl coarsen_icon_manyt.ncl datein=yyyymmdd hourin=i")
+      exit()
+    end if
+
+    if ((hourin .ne. 0) .and. (hourin .ne. 1) .and. (hourin .ne. 2) .and. (hourin .ne. 3) \
+                        .and. (hourin .ne. 4) .and. (hourin .ne. 5) .and. (hourin .ne. 6) \
+                        .and. (hourin .ne. 7)    ) then
+      print("error: hourin must be integer between 0 and 7")
+      exit()
+    end if
+
+  ;=======================================================
+  ; User defined variables
 
 
-    generic_path     = "/scratch/b/b381215/"
-    timestep_path    = (/ 20160801 , 20160801 , 20160801 , 20160801 , 20160801 , 20160801 , 20160801 , 20160801/) ; time in file name
-    timestep_idx     = (/        0 ,        1 ,        2 ,        3 ,        4 ,        5 ,        6 ,        7 /) ; time idx in file
-    time_ref         = todouble(2016080100)      ; all times ref to this time
-    filename         = "nwp_R2B10_lkm1007_"
-    n_time_in = dimsizes(timestep_path)
+  ;===================================;
+  ; define coarsening resolution      ;
+  ;===================================;
 
    ; define coarse graining resolution / degrees
    CG_resol = "0.2"
@@ -51,30 +63,25 @@ begin
    t_step_in = 3
 
   ;===================================;
-  ; define paths to output files      ;
-  ;===================================;
-
-    path_out     = "/scratch/b/b381215/SCM_in/"          ; Output directory
-    file_out_tmp = (/filename, \
-                     CG_resol,"_",\
-                     tostring(timestep_path(0)),".",tostring(t_step_in*timestep_idx(0)),"-",\
-                     tostring(timestep_path(n_time_in-1)),".",tostring(t_step_in*timestep_idx(n_time_in-1)),\
-                     ".nc"/)                                                   ; Output file name
-    file_out = str_concat(file_out_tmp)
-    delete([/file_out_tmp/])
-
-  ;===================================;
   ; define temporal interpolation     ;
   ;===================================;
 
-    t_step_out = t_step_in*60*60       ; in seconds.  Ensure integer. 
+    t_step_out = t_step_in*60*60       ; in seconds.  Ensure integer.
     flag_interp_time   = False             ; for DEPHY, we will not perform interpolation
 
   ;===================================;
   ; define optional smoothing         ;
   ;===================================;
 
-  smooth_flag = True
+    flag_smooth = True
+
+  ;====================================;
+  ; define optional land interpolation ;
+  ; - sets land points to Nan          ;
+  ;  and interp from neighbouring sea  ;
+  ;====================================;
+
+    flag_land = True
 
   ;===================================;
   ; select subset data for testing    ;
@@ -89,8 +96,42 @@ begin
 
     flag_subset = True
 
+  ;===================================;
+  ; define code version               ;
+  ;===================================;
+
+  version = "v1.0"
+
+  ;===================================;
+  ; define paths to input variables   ;
+  ;===================================;
+
+    generic_path     = "/scratch/b/b381215/CG/"
+;;    timestep_path    = (/ 20160811 , 20160811 , 20160811 , 20160811 , 20160811 , 20160811 , 20160811 , 20160811/) ; time in file name
+;;    timestep_idx     = (/        0 ,        1 ,        2 ,        3 ,        4 ,        5 ,        6 ,        7 /) ; time idx in file
+    timestep_path = (/ datein /)
+    timestep_idx  = (/ hourin /)
+    time_ref         = todouble(2016080100)      ; all times ref to this time
+    filename         = "nwp_R2B10_lkm1007_"
+    n_time_in = dimsizes(timestep_path)
+
+  ;===================================;
+  ; define paths to output files      ;
+  ;===================================;
+
+    path_out     = "/scratch/b/b381215/CG/SCM_in/"          ; Output directory
+;;    file_out_tmp = (/filename, \
+;;                     CG_resol,"_",\
+;;                     tostring(timestep_path(0)),".",tostring(t_step_in*timestep_idx(0)),"-",\
+;;                     tostring(timestep_path(n_time_in-1)),".",tostring(t_step_in*timestep_idx(n_time_in-1)),\
+;;                     ".nc"/)                                                   ; Output file name
+    file_out_tmp = (/"mumip_icon2.5_",region,"_",CG_resol,"_",\
+                     tostring(timestep_path),".",tostring(t_step_in*timestep_idx),"_",version,".nc"/) 
+    file_out = str_concat(file_out_tmp)
+    delete([/file_out_tmp/])
+
   ;================================================;
-  ; Define input co-ordinates (high-res)           ;
+  ; Read in input co-ordinates (high-res)           ;
   ;================================================;
 
     filetype = "atm_3d"
@@ -124,7 +165,7 @@ begin
     ; HMC! if we move to consider land points, will need to edit this
     do j=0,n_lon_in-1
       do i=0,n_lat_in-1
-        if lsm_data_tmp(i,j).eq.0
+        if (lsm_data_tmp(i,j).eq.0).and.(zorog_data_tmp(i,j).eq.0) then
            ; use me for height coordinate
            levh_in_tmp = lev_data_tmp(:,i,j)
            break_me = True
@@ -176,6 +217,69 @@ begin
     height_data_in&lon = lon_in
 
   ;================================================;
+  ; Erase land if required                         ;
+  ;================================================;
+
+    height_data_in@_FillValue = default_fillvalue("float")
+    lsm_data_tmp@_FillValue   = default_fillvalue("float")
+    zorog_data_tmp@_FillValue = default_fillvalue("float")
+    z0_data_tmp@_FillValue    = default_fillvalue("float")
+
+    if (flag_land) then
+      ; any point where zorog ~= 0 exactly has some land
+      tol = 10^(-12)
+      land2d = zorog_data_tmp+lsm_data_tmp
+      land3d = conform(height_data_in,land2d,(/1,2/))
+
+      lsm_data_out    = where(land2d.ge.tol,lsm_data_tmp@_FillValue  ,lsm_data_tmp)
+      height_data_out1 = where(land3d.ge.tol,height_data_in@_FillValue,height_data_in)
+      zorog_data_out  = where(land2d.ge.tol,zorog_data_tmp@_FillValue,zorog_data_tmp)
+      z0_data_out     = where(land2d.ge.tol,z0_data_tmp@_FillValue   ,z0_data_tmp) 
+
+      copy_VarCoords(lsm_data_tmp,lsm_data_out)
+      copy_VarAtts(  lsm_data_tmp,lsm_data_out)
+      copy_VarCoords(height_data_in,height_data_out1)
+      copy_VarAtts(  height_data_in,height_data_out1)
+      copy_VarCoords(zorog_data_tmp,zorog_data_out)
+      copy_VarAtts(  zorog_data_tmp,zorog_data_out)
+      copy_VarCoords(z0_data_tmp,z0_data_out)
+      copy_VarAtts(  z0_data_tmp,z0_data_out)
+
+      ;======================
+      ; use poisson grid fill to smoothly fill in missing values
+      is_cyclic  = False     ; not cyclic data
+      guess_type = 1         ; start with zonal means
+      nscan      = 200       ; no. iterations
+      eps        = 1.e-6     ; tolerance
+      relc       = 0.6       ; relaxation const
+      opt        = 0         ; dummy
+
+      poisson_grid_fill(lsm_data_out    ,is_cyclic,guess_type,nscan,eps,relc,opt)
+      poisson_grid_fill(height_data_out1,is_cyclic,guess_type,nscan,eps,relc,opt)
+      poisson_grid_fill(zorog_data_out  ,is_cyclic,guess_type,nscan,eps,relc,opt)
+      poisson_grid_fill(z0_data_out     ,is_cyclic,guess_type,nscan,eps,relc,opt)
+
+      ;= create new variable to indicate where we have interpolated
+      land_mask    = where(land2d.ge.tol,lsm_data_tmp@_FillValue  ,lsm_data_tmp)
+      copy_VarCoords(lsm_data_tmp,land_mask)
+      copy_VarAtts(  lsm_data_tmp,land_mask)
+      land_mask@long_name = "Land erased if Fill Value"
+
+    else
+
+      lsm_data_out    = lsm_data_tmp
+      height_data_out1 = height_data_in
+      zorog_data_out  = zorog_data_tmp
+      z0_data_out     = z0_data_tmp
+
+      land_mask = lsm_data_out
+      land_mask@long_name = "Land erased if Fill Value"
+
+    end if
+
+    delete([/lsm_data_tmp,height_data_in,zorog_data_tmp,z0_data_tmp,land3d/])
+
+  ;================================================;
   ; Define output co-ordinates (low-res)           ;
   ;================================================;
 
@@ -193,7 +297,7 @@ begin
     if (.not.flag_interp_lev) then
         lev_out = levf_in
         n_lev_out = n_lev_in
-        height_data_out = height_data_in
+        height_data_out = height_data_out1
     else
        print("Error! assuming no vertical interpolation required")
     end if
@@ -284,9 +388,10 @@ begin
     add_to_file(fout,lat_out              ,"lat")
     add_to_file(fout,lon_out              ,"lon")
     add_to_file(fout,height_data_out      ,"height_t")
-    add_to_file(fout,lsm_data_tmp         ,"lsm")
-    add_to_file(fout,zorog_data_tmp       ,"zorog")
-    add_to_file(fout,z0_data_tmp          ,"z0")
+    add_to_file(fout,lsm_data_out         ,"lsm")
+    add_to_file(fout,zorog_data_out       ,"zorog")
+    add_to_file(fout,z0_data_out          ,"z0")
+    add_to_file(fout,land_mask            ,"land_erase_flag")
 ;    add_to_file(fout,date                 , "date")
 ;    add_to_file(fout,second               , "second")
 
@@ -315,8 +420,26 @@ begin
 
     ; vertical coordinate. already on full levels
 
+    ; Erase land if required ===========================;
+    pres_data_out@_FillValue = default_fillvalue("float")
+    if (flag_land) then
+
+      land4d = conform(pres_data_out,land2d,(/2,3/))
+      pres_data_out_lf = where(land4d.ge.tol,pres_data_out@_FillValue,pres_data_out)
+
+      copy_VarCoords(pres_data_out,pres_data_out_lf)
+      copy_VarAtts(  pres_data_out,pres_data_out_lf)
+
+      poisson_grid_fill(pres_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+
+      delete([/pres_data_out/])
+      pres_data_out = pres_data_out_lf
+      delete([/pres_data_out_lf,land4d/])
+
+    end if
+
     ; smooth data to remove unresolved features
-    if smooth_flag then
+    if flag_smooth then
        pres_data_out_sm = smth9_Wrap(pres_data_out,0.5,0.25,False)
        delete([/pres_data_out/])
        pres_data_out = pres_data_out_sm
@@ -350,8 +473,26 @@ begin
 
     ; vertical coordinate. already on full levels
 
+    ; Erase land if required ===========================;
+    t_data_out@_FillValue = default_fillvalue("float")
+    if (flag_land) then
+
+      land4d = conform(t_data_out,land2d,(/2,3/))
+      t_data_out_lf = where(land4d.ge.tol,t_data_out@_FillValue,t_data_out)
+
+      copy_VarCoords(t_data_out,t_data_out_lf)
+      copy_VarAtts(  t_data_out,t_data_out_lf)
+
+      poisson_grid_fill(t_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+
+      delete([/t_data_out/])
+      t_data_out = t_data_out_lf
+      delete([/t_data_out_lf,land4d/])
+
+    end if
+
     ; smooth data to remove unresolved features
-    if smooth_flag then
+    if flag_smooth then
        t_data_out_sm = smth9_Wrap(t_data_out,0.5,0.25,False)
        delete([/t_data_out/])
        t_data_out = t_data_out_sm
@@ -384,8 +525,26 @@ begin
 
     ; vertical coordinate. already on full levels
 
+    ; Erase land if required ===========================;
+    theta_data_out@_FillValue = default_fillvalue("float")
+    if (flag_land) then
+
+      land4d = conform(theta_data_out,land2d,(/2,3/))
+      theta_data_out_lf = where(land4d.ge.tol,theta_data_out@_FillValue,theta_data_out)
+
+      copy_VarCoords(theta_data_out,theta_data_out_lf)
+      copy_VarAtts(  theta_data_out,theta_data_out_lf)
+
+      poisson_grid_fill(theta_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+
+      delete([/theta_data_out/])
+      theta_data_out = theta_data_out_lf
+      delete([/theta_data_out_lf,land4d/])
+
+    end if
+
     ; smooth data to remove unresolved features
-    if smooth_flag then
+    if flag_smooth then
        theta_data_out_sm = smth9_Wrap(theta_data_out,0.5,0.25,False)
        delete([/theta_data_out/])
        theta_data_out = theta_data_out_sm
@@ -424,8 +583,27 @@ begin
     w_data_out@long_name="Vertical Velocity (w)"
     w_data_out@units="m s-1"
 
+    ; Erase land if required ===========================;
+    w_data_out@_FillValue = default_fillvalue("float")
+    if (flag_land) then
+
+      land4d = conform(w_data_out,land2d,(/2,3/))
+      w_data_out_lf = where(land4d.ge.tol,w_data_out@_FillValue,w_data_out)
+
+      copy_VarCoords(w_data_out,w_data_out_lf)
+      copy_VarAtts(  w_data_out,w_data_out_lf)
+
+      poisson_grid_fill(w_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+
+      delete([/w_data_out/])
+      w_data_out = w_data_out_lf
+      delete([/w_data_out_lf,land4d/])
+
+    end if
+
+
     ; smooth data to remove unresolved features
-    if smooth_flag then
+    if flag_smooth then
        w_data_out_sm = smth9_Wrap(w_data_out,0.5,0.25,False)
        delete([/w_data_out/])
        w_data_out = w_data_out_sm
@@ -473,8 +651,27 @@ begin
 
     ; vertical coordinate. already on full levels
 
+    ; Erase land if required ===========================;
+    u_data_out@_FillValue = default_fillvalue("float")
+    if (flag_land) then
+
+      land4d = conform(u_data_out,land2d,(/2,3/))
+      u_data_out_lf = where(land4d.ge.tol,u_data_out@_FillValue,u_data_out)
+
+      copy_VarCoords(u_data_out,u_data_out_lf)
+      copy_VarAtts(  u_data_out,u_data_out_lf)
+
+      poisson_grid_fill(u_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+
+      delete([/u_data_out/])
+      u_data_out = u_data_out_lf
+      delete([/u_data_out_lf,land4d/])
+
+    end if
+
+
     ; smooth data to remove unresolved features
-    if smooth_flag then
+    if flag_smooth then
        u_data_out_sm = smth9_Wrap(u_data_out,0.5,0.25,False)
        delete([/u_data_out/])
        u_data_out = u_data_out_sm
@@ -506,8 +703,27 @@ begin
 
     ; vertical coordinate. already on full levels
 
+    ; Erase land if required ===========================;
+    v_data_out@_FillValue = default_fillvalue("float")
+    if (flag_land) then
+
+      land4d = conform(v_data_out,land2d,(/2,3/))
+      v_data_out_lf = where(land4d.ge.tol,v_data_out@_FillValue,v_data_out)
+
+      copy_VarCoords(v_data_out,v_data_out_lf)
+      copy_VarAtts(  v_data_out,v_data_out_lf)
+
+      poisson_grid_fill(v_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+
+      delete([/v_data_out/])
+      v_data_out = v_data_out_lf
+      delete([/v_data_out_lf,land4d/])
+
+    end if
+
+
     ; smooth data to remove unresolved features
-    if smooth_flag then
+    if flag_smooth then
        v_data_out_sm = smth9_Wrap(v_data_out,0.5,0.25,False)
        delete([/v_data_out/])
        v_data_out = v_data_out_sm
@@ -548,8 +764,26 @@ begin
       delete([/qv_tmp/])
     end do
 
+    ; Erase land if required ===========================;
+    qv_data_out@_FillValue = default_fillvalue("float")
+    if (flag_land) then
+
+      land4d = conform(qv_data_out,land2d,(/2,3/))
+      qv_data_out_lf = where(land4d.ge.tol,qv_data_out@_FillValue,qv_data_out)
+
+      copy_VarCoords(qv_data_out,qv_data_out_lf)
+      copy_VarAtts(  qv_data_out,qv_data_out_lf)
+
+      poisson_grid_fill(qv_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+
+      delete([/qv_data_out/])
+      qv_data_out = qv_data_out_lf
+      delete([/qv_data_out_lf,land4d/])
+
+    end if
+
     ; smooth data to remove unresolved features
-    if smooth_flag then
+    if flag_smooth then
        qv_data_out_sm = smth9_Wrap(qv_data_out,0.5,0.25,False)
        delete([/qv_data_out/])
        qv_data_out = qv_data_out_sm
@@ -577,8 +811,27 @@ begin
       delete([/ql_tmp/])
     end do
 
+    ; Erase land if required ===========================;
+    ql_data_out@_FillValue = default_fillvalue("float")
+    if (flag_land) then
+
+      land4d = conform(ql_data_out,land2d,(/2,3/))
+      ql_data_out_lf = where(land4d.ge.tol,ql_data_out@_FillValue,ql_data_out)
+
+      copy_VarCoords(ql_data_out,ql_data_out_lf)
+      copy_VarAtts(  ql_data_out,ql_data_out_lf)
+
+      poisson_grid_fill(ql_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+
+      delete([/ql_data_out/])
+      ql_data_out = ql_data_out_lf
+      delete([/ql_data_out_lf,land4d/])
+
+    end if
+
+
     ; smooth data to remove unresolved features
-    if smooth_flag then
+    if flag_smooth then
        ql_data_out_sm = smth9_Wrap(ql_data_out,0.5,0.25,False)
        delete([/ql_data_out/])
        ql_data_out = ql_data_out_sm
@@ -606,8 +859,26 @@ begin
       delete([/qi_tmp/])
     end do
 
+    ; Erase land if required ===========================;
+    qi_data_out@_FillValue = default_fillvalue("float")
+    if (flag_land) then
+
+      land4d = conform(qi_data_out,land2d,(/2,3/))
+      qi_data_out_lf = where(land4d.ge.tol,qi_data_out@_FillValue,qi_data_out)
+
+      copy_VarCoords(qi_data_out,qi_data_out_lf)
+      copy_VarAtts(  qi_data_out,qi_data_out_lf)
+
+      poisson_grid_fill(qi_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+
+      delete([/qi_data_out/])
+      qi_data_out = qi_data_out_lf
+      delete([/qi_data_out_lf,land4d/])
+
+    end if
+
     ; smooth data to remove unresolved features
-    if smooth_flag then
+    if flag_smooth then
        qi_data_out_sm = smth9_Wrap(qi_data_out,0.5,0.25,False)
        delete([/qi_data_out/])
        qi_data_out = qi_data_out_sm
@@ -618,16 +889,16 @@ begin
     delete_VarAtts(qi_data_out,(/"param","time","height"/))
     delete([/variable_file,variable_name/])
 
-;  ;==========================
-;    print("qt calculation")
-;
-;    qt_data_out = qv_data_out+ql_data_out+qi_data_out
-;    copy_VarCoords(qv_data_out,qt_data_out)
-;    qt_data_out@long_name="Total water content"
-;    qt_data_out@units="kg kg-1"
-;
-;    ; vertical coordinate. already on full levels
-;
+  ;==========================
+    print("qt calculation")
+
+    qt_data_out = qv_data_out+ql_data_out+qi_data_out
+    copy_VarCoords(qv_data_out,qt_data_out)
+    qt_data_out@long_name="Total water content"
+    qt_data_out@units="kg kg-1"
+
+    ; vertical coordinate. already on full levels
+
 ;  ;==========================
 ;    print("rv/rl/ri/rt calculation")
 ;
@@ -659,13 +930,13 @@ begin
     add_to_file(fout,qv_data_out,"qv_t")
     add_to_file(fout,ql_data_out,"ql_t")
     add_to_file(fout,qi_data_out,"qi_t")
-;    add_to_file(fout,qt_data_out,"qt_t")
+    add_to_file(fout,qt_data_out,"qt_t")
 ;    add_to_file(fout,rv_data_out,"rv_t")
 ;    add_to_file(fout,rl_data_out,"rl_t")
 ;    add_to_file(fout,ri_data_out,"ri_t")
 ;    add_to_file(fout,rt_data_out,"rt_t")
     delete([/qv_data_out,ql_data_out,qi_data_out/])
-;    delete([/qt_data_out/])
+    delete([/qt_data_out/])
 ;    delete([/rv_data_out,rl_data_out,ri_data_out,rt_data_out/])
 
   ;==================================================================================
@@ -708,8 +979,26 @@ begin
     ; DEPHY sign convention: positive upwards
     shfl_data_out = -1.0*shfl_data_out
 
+    ; Erase land if required ===========================;
+    shfl_data_out@_FillValue = default_fillvalue("float")
+    if (flag_land) then
+
+      land3d = conform(shfl_data_out,land2d,(/1,2/))
+      shfl_data_out_lf = where(land3d.ge.tol,shfl_data_out@_FillValue,shfl_data_out)
+
+      copy_VarCoords(shfl_data_out,shfl_data_out_lf)
+      copy_VarAtts(  shfl_data_out,shfl_data_out_lf)
+
+      poisson_grid_fill(shfl_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+
+      delete([/shfl_data_out/])
+      shfl_data_out = shfl_data_out_lf
+      delete([/shfl_data_out_lf,land3d/])
+
+    end if
+
     ; smooth data to remove unresolved features
-    if smooth_flag then
+    if flag_smooth then
        shfl_data_out_sm = smth9_Wrap(shfl_data_out,0.5,0.25,False)
        delete([/shfl_data_out/])
        shfl_data_out = shfl_data_out_sm
@@ -741,8 +1030,26 @@ begin
     ; DEPHY sign convention: positive upwards
     lhfl_data_out = -1.0*lhfl_data_out
 
+   ; Erase land if required ===========================;
+    lhfl_data_out@_FillValue = default_fillvalue("float")
+    if (flag_land) then
+
+      land3d = conform(lhfl_data_out,land2d,(/1,2/))
+      lhfl_data_out_lf = where(land3d.ge.tol,lhfl_data_out@_FillValue,lhfl_data_out)
+       
+      copy_VarCoords(lhfl_data_out,lhfl_data_out_lf)
+      copy_VarAtts(  lhfl_data_out,lhfl_data_out_lf)
+    
+      poisson_grid_fill(lhfl_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+    
+      delete([/lhfl_data_out/])
+      lhfl_data_out = lhfl_data_out_lf
+      delete([/lhfl_data_out_lf,land3d/])
+    
+    end if
+
     ; smooth data to remove unresolved features
-    if smooth_flag then
+    if flag_smooth then
        lhfl_data_out_sm = smth9_Wrap(lhfl_data_out,0.5,0.25,False)
        delete([/lhfl_data_out/])
        lhfl_data_out = lhfl_data_out_sm
@@ -771,8 +1078,26 @@ begin
     t_g_data_out(time|:,lat|:,lon|:) = func_reduce_area(t_g_tmp,flag_subset,set_lat_min,set_lat_max,set_lon_min,set_lon_max,3)
     delete([/t_g_tmp/])
 
+   ; Erase land if required ===========================;
+    t_g_data_out@_FillValue = default_fillvalue("float")
+    if (flag_land) then
+
+      land3d = conform(t_g_data_out,land2d,(/1,2/))
+      t_g_data_out_lf = where(land3d.ge.tol,t_g_data_out@_FillValue,t_g_data_out)
+       
+      copy_VarCoords(t_g_data_out,t_g_data_out_lf)
+      copy_VarAtts(  t_g_data_out,t_g_data_out_lf)
+    
+      poisson_grid_fill(t_g_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+    
+      delete([/t_g_data_out/])
+      t_g_data_out = t_g_data_out_lf
+      delete([/t_g_data_out_lf,land3d/])
+    
+    end if
+
     ; smooth data to remove unresolved features
-    if smooth_flag then
+    if flag_smooth then
        t_g_data_out_sm = smth9_Wrap(t_g_data_out,0.5,0.25,False)
        delete([/t_g_data_out/])
        t_g_data_out = t_g_data_out_sm
@@ -801,8 +1126,26 @@ begin
     ps_data_out(time|:,lat|:,lon|:) = func_reduce_area(ps_tmp,flag_subset,set_lat_min,set_lat_max,set_lon_min,set_lon_max,3)
     delete([/ps_tmp/])
 
+   ; Erase land if required ===========================;
+    ps_data_out@_FillValue = default_fillvalue("float")
+    if (flag_land) then
+
+      land3d = conform(ps_data_out,land2d,(/1,2/))
+      ps_data_out_lf = where(land3d.ge.tol,ps_data_out@_FillValue,ps_data_out)
+       
+      copy_VarCoords(ps_data_out,ps_data_out_lf)
+      copy_VarAtts(  ps_data_out,ps_data_out_lf)
+    
+      poisson_grid_fill(ps_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+    
+      delete([/ps_data_out/])
+      ps_data_out = ps_data_out_lf
+      delete([/ps_data_out_lf,land3d/])
+    
+    end if
+
     ; smooth data to remove unresolved features
-    if smooth_flag then
+    if flag_smooth then
        ps_data_out_sm = smth9_Wrap(ps_data_out,0.5,0.25,False)
        delete([/ps_data_out/])
        ps_data_out = ps_data_out_sm
@@ -833,8 +1176,26 @@ begin
     umfl_data_out(time|:,lat|:,lon|:) = func_reduce_area(umfl_tmp,flag_subset,set_lat_min,set_lat_max,set_lon_min,set_lon_max,3)
     delete([/umfl_tmp/])
 
+   ; Erase land if required ===========================;
+    umfl_data_out@_FillValue = default_fillvalue("float")
+    if (flag_land) then
+
+      land3d = conform(umfl_data_out,land2d,(/1,2/))
+      umfl_data_out_lf = where(land3d.ge.tol,umfl_data_out@_FillValue,umfl_data_out)
+       
+      copy_VarCoords(umfl_data_out,umfl_data_out_lf)
+      copy_VarAtts(  umfl_data_out,umfl_data_out_lf)
+    
+      poisson_grid_fill(umfl_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+    
+      delete([/umfl_data_out/])
+      umfl_data_out = umfl_data_out_lf
+      delete([/umfl_data_out_lf,land3d/])
+    
+    end if
+
     ; smooth data to remove unresolved features
-    if smooth_flag then
+    if flag_smooth then
        umfl_data_out_sm = smth9_Wrap(umfl_data_out,0.5,0.25,False)
        delete([/umfl_data_out/])
        umfl_data_out = umfl_data_out_sm
@@ -853,8 +1214,26 @@ begin
     vmfl_data_out(time|:,lat|:,lon|:) = func_reduce_area(vmfl_tmp,flag_subset,set_lat_min,set_lat_max,set_lon_min,set_lon_max,3)
     delete([/vmfl_tmp/])
 
+   ; Erase land if required ===========================;
+    vmfl_data_out@_FillValue = default_fillvalue("float")
+    if (flag_land) then
+
+      land3d = conform(vmfl_data_out,land2d,(/1,2/))
+      vmfl_data_out_lf = where(land3d.ge.tol,vmfl_data_out@_FillValue,vmfl_data_out)
+       
+      copy_VarCoords(vmfl_data_out,vmfl_data_out_lf)
+      copy_VarAtts(  vmfl_data_out,vmfl_data_out_lf)
+    
+      poisson_grid_fill(vmfl_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+    
+      delete([/vmfl_data_out/])
+      vmfl_data_out = vmfl_data_out_lf
+      delete([/vmfl_data_out_lf,land3d/])
+    
+    end if
+
     ; smooth data to remove unresolved features
-    if smooth_flag then
+    if flag_smooth then
        vmfl_data_out_sm = smth9_Wrap(vmfl_data_out,0.5,0.25,False)
        delete([/vmfl_data_out/])
        vmfl_data_out = vmfl_data_out_sm
@@ -891,8 +1270,26 @@ begin
     clct_data_out(time|:,lat|:,lon|:) = func_reduce_area(clct_tmp,flag_subset,set_lat_min,set_lat_max,set_lon_min,set_lon_max,3)
     delete([/clct_tmp/])
 
+   ; Erase land if required ===========================;
+    clct_data_out@_FillValue = default_fillvalue("float")
+    if (flag_land) then
+
+      land3d = conform(clct_data_out,land2d,(/1,2/))
+      clct_data_out_lf = where(land3d.ge.tol,clct_data_out@_FillValue,clct_data_out)
+       
+      copy_VarCoords(clct_data_out,clct_data_out_lf)
+      copy_VarAtts(  clct_data_out,clct_data_out_lf)
+    
+      poisson_grid_fill(clct_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+    
+      delete([/clct_data_out/])
+      clct_data_out = clct_data_out_lf
+      delete([/clct_data_out_lf,land3d/])
+    
+    end if
+
     ; smooth data to remove unresolved features
-    if smooth_flag then
+    if flag_smooth then
        clct_data_out_sm = smth9_Wrap(clct_data_out,0.5,0.25,False)
        delete([/clct_data_out/])
        clct_data_out = clct_data_out_sm
@@ -916,8 +1313,26 @@ begin
     tot_prec_data_out(time|:,lat|:,lon|:) = func_reduce_area(tot_prec_tmp,flag_subset,set_lat_min,set_lat_max,set_lon_min,set_lon_max,3)
     delete([/tot_prec_tmp/])
 
+   ; Erase land if required ===========================;
+    tot_prec_data_out@_FillValue = default_fillvalue("float")
+    if (flag_land) then
+
+      land3d = conform(tot_prec_data_out,land2d,(/1,2/))
+      tot_prec_data_out_lf = where(land3d.ge.tol,tot_prec_data_out@_FillValue,tot_prec_data_out)
+       
+      copy_VarCoords(tot_prec_data_out,tot_prec_data_out_lf)
+      copy_VarAtts(  tot_prec_data_out,tot_prec_data_out_lf)
+    
+      poisson_grid_fill(tot_prec_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+    
+      delete([/tot_prec_data_out/])
+      tot_prec_data_out = tot_prec_data_out_lf
+      delete([/tot_prec_data_out_lf,land3d/])
+    
+    end if
+
     ; smooth data to remove unresolved features
-    if smooth_flag then
+    if flag_smooth then
        tot_prec_data_out_sm = smth9_Wrap(tot_prec_data_out,0.5,0.25,False)
        delete([/tot_prec_data_out/])
        tot_prec_data_out = tot_prec_data_out_sm
@@ -941,8 +1356,26 @@ begin
     qv_s_data_out(time|:,lat|:,lon|:) = func_reduce_area(qv_s_tmp,flag_subset,set_lat_min,set_lat_max,set_lon_min,set_lon_max,3)
     delete([/qv_s_tmp/])
 
+   ; Erase land if required ===========================;
+    qv_s_data_out@_FillValue = default_fillvalue("float")
+    if (flag_land) then
+
+      land3d = conform(qv_s_data_out,land2d,(/1,2/))
+      qv_s_data_out_lf = where(land3d.ge.tol,qv_s_data_out@_FillValue,qv_s_data_out)
+       
+      copy_VarCoords(qv_s_data_out,qv_s_data_out_lf)
+      copy_VarAtts(  qv_s_data_out,qv_s_data_out_lf)
+    
+      poisson_grid_fill(qv_s_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+    
+      delete([/qv_s_data_out/])
+      qv_s_data_out = qv_s_data_out_lf
+      delete([/qv_s_data_out_lf,land3d/])
+    
+    end if
+
     ; smooth data to remove unresolved features
-    if smooth_flag then
+    if flag_smooth then
        qv_s_data_out_sm = smth9_Wrap(qv_s_data_out,0.5,0.25,False)
        delete([/qv_s_data_out/])
        qv_s_data_out = qv_s_data_out_sm
@@ -1036,6 +1469,12 @@ begin
 
     ; z0 roughness length provided as well as ustar
     globalAtt@surfaceForcingWind = "z0/ustar"
+
+    ; finally, save flags used when running this script
+    globalAtt@flag_land        = flag_land
+    globalAtt@flag_smooth      = flag_smooth
+    globalAtt@flag_interp_time = flag_interp_time
+    globalAtt@code_version     = version
 
     ; save global attributes to file
     fileattdef(fout, globalAtt )

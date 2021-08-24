@@ -31,7 +31,9 @@ begin
     lsm                     = fout->lsm
 
     t_data_out              = fout->temp_t
-    rv_data_out             = fout->rv_t
+    qv_data_out             = fout->qv_t
+    ql_data_out             = fout->ql_t
+    qi_data_out             = fout->qi_t
 
 ;    ps_data_out             = fout->ps
 ;    z_sfc                   = fout->z_sfc
@@ -59,6 +61,13 @@ begin
     ;=====================
     ; virtual temperature
     ; p. 17, Rogers and Yau
+
+    qt_data = qv_data_out+ql_data_out+qi_data_out
+    ; deduce specific mass of dry air
+    qd_data = 1 - qt_data
+
+    ; convert to m.r.
+    rv_data_out = qv_data_out/qd_data
 
     epsilon = 0.622
     tv_top = t_data_out*(1 + rv_data_out/epsilon)
