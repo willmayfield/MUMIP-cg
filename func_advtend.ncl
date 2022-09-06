@@ -26,9 +26,16 @@ begin
     vartend_data_out@long_name =long_name_out
     vartend_data_out@units     =units_out
 
-    ;-- save to file
-    add_to_file(fout,vartend_data_out  , var_name_out)
+    ;====================
+    ; ensure saved as float not double
+    vartend_data_out_flt = tofloat(vartend_data_out)
 
-    delete([/var_data_out, u_data_out, v_data_out, vartend_data_out/])
+    copy_VarAtts(vartend_data_out,vartend_data_out_flt)
+    copy_VarCoords(vartend_data_out,vartend_data_out_flt)
+
+    ;-- save to file
+    add_to_file(fout,vartend_data_out_flt  , var_name_out)
+
+    delete([/var_data_out, u_data_out, v_data_out, vartend_data_out, vartend_data_out_flt/])
 
 end

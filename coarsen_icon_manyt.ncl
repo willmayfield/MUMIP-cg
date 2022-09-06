@@ -27,6 +27,7 @@ load "add_to_file.ncl"
 load "func_advection.ncl"
 load "func_advtend.ncl"
 load "func_geostrophic.ncl"
+load "func_thetal.ncl"
 
 
 begin
@@ -83,6 +84,22 @@ begin
 
     flag_land = True
 
+  ;====================================;
+  ; define whether to use CG high-res  ;
+  ;  input fields for mixing ratios    ;
+  ;  as opposed to estimating from q   ;
+  ;====================================;
+
+    flag_accurate_r = False
+
+  ;====================================;
+  ; define whether to use CG high-res  ;
+  ;  input fields for theta_l          ;
+  ;  as opposed to estimating          ;
+  ;====================================;
+
+    flag_accurate_thetal = False
+
   ;===================================;
   ; select subset data for testing    ;
   ;===================================;
@@ -100,13 +117,13 @@ begin
   ; define code version               ;
   ;===================================;
 
-  version = "v1.0"
+  version = "v2.0"
 
   ;===================================;
   ; define paths to input variables   ;
   ;===================================;
 
-    generic_path     = "/scratch/b/b381215/CG/"
+    generic_path     = "/home/b/b381215/work/CG/"
 ;;    timestep_path    = (/ 20160811 , 20160811 , 20160811 , 20160811 , 20160811 , 20160811 , 20160811 , 20160811/) ; time in file name
 ;;    timestep_idx     = (/        0 ,        1 ,        2 ,        3 ,        4 ,        5 ,        6 ,        7 /) ; time idx in file
     timestep_path = (/ datein /)
@@ -119,14 +136,14 @@ begin
   ; define paths to output files      ;
   ;===================================;
 
-    path_out     = "/scratch/b/b381215/CG/SCM_in/"          ; Output directory
+    path_out     = "/home/b/b381215/work/CG/SCM_in/"          ; Output directory
 ;;    file_out_tmp = (/filename, \
 ;;                     CG_resol,"_",\
 ;;                     tostring(timestep_path(0)),".",tostring(t_step_in*timestep_idx(0)),"-",\
 ;;                     tostring(timestep_path(n_time_in-1)),".",tostring(t_step_in*timestep_idx(n_time_in-1)),\
 ;;                     ".nc"/)                                                   ; Output file name
     file_out_tmp = (/"mumip_icon2.5_",region,"_",CG_resol,"_",\
-                     tostring(timestep_path),".",tostring(t_step_in*timestep_idx),"_",version,".nc"/) 
+                     tostring(timestep_path),".",tostring_with_format(t_step_in*timestep_idx, "%0.2i"),"_",version,".nc"/) 
     file_out = str_concat(file_out_tmp)
     delete([/file_out_tmp/])
 
@@ -155,11 +172,19 @@ begin
 
     ; Input variable dimensions: (time, latitude, longitude) ;
     in_file        = addfile(data_path,"r")
-    lev_data_tmp   = in_file->HHL(0,:,:,:)
+    ;; GRIB changes
+    ;;lev_data_tmp   = in_file->HHL(0,:,:,:)
+    ;;height_data_tmp = lev_data_tmp
+    ;;lsm_data_tmp   = in_file->FR_LAND(0,:,:)
+    ;;zorog_data_tmp = in_file->HSURF(0,:,:)
+    ;;z0_data_tmp    = in_file->Z0(0,:,:)
+    ;;=======
+    lev_data_tmp   = in_file->zg(0,:,:,:)
     height_data_tmp = lev_data_tmp
-    lsm_data_tmp   = in_file->FR_LAND(0,:,:)
-    zorog_data_tmp = in_file->HSURF(0,:,:)
-    z0_data_tmp    = in_file->Z0(0,:,:)
+    lsm_data_tmp   = in_file->lsm(0,:,:)
+    zorog_data_tmp = in_file->zg_2(0,:,:)
+    z0_data_tmp    = in_file->sr(0,:,:)
+
 
     ; select a height profile characteristic of a sea point
     ; HMC! if we move to consider land points, will need to edit this
@@ -406,7 +431,8 @@ begin
 
     filetype = "atm_3d"
     variable_file = "pres"  ; name of file
-    variable_name = "P"     ; name in file
+;    variable_name = "P"     ; name in file
+    variable_name = "pfull"
 
     ; initialise: time, lev, lat, lon
     pres_data_out = array_4d_out
@@ -459,7 +485,8 @@ begin
 
     filetype = "atm_3d"
     variable_file = "t"  ; name of file
-    variable_name = "T"     ; name in file
+   ; variable_name = "T"     ; name in file
+    variable_name = "ta"     ; name in file
 
     ; initialise: time, lev, lat, lon
     t_data_out = array_4d_out
@@ -559,13 +586,72 @@ begin
     delete([/variable_file,variable_name,theta_data_out/])
 
   ;==================================================================================
+  ; param 3b. thetal
+
+    if (flag_accurate_thetal) then
+
+       print("thetal calculation")
+   
+       filetype = "atm_3d"
+       variable_file = "thetal"  ; name of file
+       variable_name = "thetal"     ; name in file
+   
+       ; initialise: time, lev, lat, lon
+       thetal_data_out = array_4d_out
+   
+       ; loop over vertical levels
+       do lev_count = 0,n_lev_in-1
+         thetal_tmp = func_read_hires(generic_path,timestep_path,timestep_idx,time_in,filename,filetype,variable_file,variable_name,CG_resol,region,lev_count)
+         thetal_data_out(time|:,lev|lev_count,lat|:,lon|:) = func_reduce_area(thetal_tmp,flag_subset,set_lat_min,set_lat_max,set_lon_min,set_lon_max,3)
+         delete([/thetal_tmp/])
+       end do
+   
+       ; vertical coordinate. already on full levels
+   
+       ; Erase land if required ===========================;
+       thetal_data_out@_FillValue = default_fillvalue("float")
+       if (flag_land) then
+   
+         land4d = conform(thetal_data_out,land2d,(/2,3/))
+         thetal_data_out_lf = where(land4d.ge.tol,thetal_data_out@_FillValue,thetal_data_out)
+   
+         copy_VarCoords(thetal_data_out,thetal_data_out_lf)
+         copy_VarAtts(  thetal_data_out,thetal_data_out_lf)
+   
+         poisson_grid_fill(thetal_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+   
+         delete([/thetal_data_out/])
+         thetal_data_out = thetal_data_out_lf
+         delete([/thetal_data_out_lf,land4d/])
+   
+       end if
+   
+       ; smooth data to remove unresolved features
+       if flag_smooth then
+          thetal_data_out_sm = smth9_Wrap(thetal_data_out,0.5,0.25,False)
+          delete([/thetal_data_out/])
+          thetal_data_out = thetal_data_out_sm
+          delete([/thetal_data_out_sm/])
+       end if
+   
+       delete_VarAtts(thetal_data_out,(/"time","height"/))
+       thetal_data_out@long_name="Potential temperature"
+       thetal_data_out@units="K"
+       add_to_file(fout,thetal_data_out,"thetal_t")
+   
+       delete([/variable_file,variable_name,thetal_data_out/])
+
+    end if ; flag_accurate_thetal
+
+  ;==================================================================================
   ; param 4. vertical velocity
 
     print("vertical velocity calculation")
 
     filetype = "atm_3d"
     variable_file = "w"  ; name of file
-    variable_name = "W"     ; name in file
+    ;variable_name = "W"     ; name in file
+    variable_name = "wa"     ; name in file
 
     ; initialise: time, lev, lat, lon
     wh_data_out = array_4dh_out
@@ -637,7 +723,8 @@ begin
 
     filetype = "atm_3d"
     variable_file = "u"  ; name of file
-    variable_name = "U"     ; name in file
+    ;variable_name = "U"     ; name in file
+    variable_name = "ua"     ; name in file
 
     ; initialise: time, lev, lat, lon
     u_data_out = array_4d_out
@@ -689,7 +776,8 @@ begin
 
     filetype = "atm_3d"
     variable_file = "v"  ; name of file
-    variable_name = "V"     ; name in file
+ ;   variable_name = "V"     ; name in file
+    variable_name = "va"     ; name in file
 
     ; initialise: time, lev, lat, lon
     v_data_out = array_4d_out
@@ -752,7 +840,8 @@ begin
 
     filetype = "atm_3d"
     variable_file = "qv"  ; name of file
-    variable_name = "QV"     ; name in file
+    ;variable_name = "QV"     ; name in file
+    variable_name = "hus"     ; name in file
 
     ; initialise: time, lev, lat, lon
     qv_data_out = array_4d_out
@@ -799,7 +888,8 @@ begin
 
     filetype = "atm_3d"
     variable_file = "tot_qc_dia"  ; name of file
-    variable_name = "QC_DIA"     ; name in file
+   ; variable_name = "QC_DIA"     ; name in file
+    variable_name = "param212.1.0"     ; name in file
 
     ; initialise: time, lev, lat, lon
     ql_data_out = array_4d_out
@@ -847,7 +937,8 @@ begin
 
     filetype = "atm_3d"
     variable_file = "tot_qi_dia"  ; name of file
-    variable_name = "QI_DIA"     ; name in file
+    ;variable_name = "QI_DIA"     ; name in file
+    variable_name = "param213.1.0"    ; name in file
 
     ; initialise: time, lev, lat, lon
     qi_data_out = array_4d_out
@@ -899,58 +990,238 @@ begin
 
     ; vertical coordinate. already on full levels
 
-;  ;==========================
-;    print("rv/rl/ri/rt calculation")
-;
-;    ; deduce specific mass of dry air
-;    qd_data = 1 - qt_data_out
-;
-;    ; convert to m.r.
-;    rv_data_out = qv_data_out/qd_data
-;    rl_data_out = ql_data_out/qd_data
-;    ri_data_out = qi_data_out/qd_data
-;    rt_data_out = qt_data_out/qd_data
-;
-;    copy_VarCoords(qv_data_out,rv_data_out)
-;    copy_VarCoords(qv_data_out,rl_data_out)
-;    copy_VarCoords(qv_data_out,ri_data_out)
-;    copy_VarCoords(qv_data_out,rt_data_out)
-;
-;    delete([/qd_data/])
-;
-;    rv_data_out@long_name = "Water vapour mixing ratio"
-;    rv_data_out@units     = "kg kg-1"
-;    rl_data_out@long_name = "Liquid water mixing ratio"
-;    rl_data_out@units     = "kg kg-1"
-;    ri_data_out@long_name = "Ice water mixing ratio"
-;    ri_data_out@units     = "kg kg-1"
-;    rt_data_out@long_name = "Total water mixing ratio"
-;    rt_data_out@units     = "kg kg-1"
+
+  ;==========================
+
+    if (flag_accurate_r) then
+   
+       print("rv calculation")
+   
+       filetype = "atm_3d"
+       variable_file = "rv"  ; name of file
+       variable_name = "rv"     ; name in file
+   
+       ; initialise: time, lev, lat, lon
+       rv_data_out = array_4d_out
+   
+       ; loop over vertical levels
+       do lev_count = 0,n_lev_in-1
+         rv_tmp = func_read_hires(generic_path,timestep_path,timestep_idx,time_in,filename,filetype,variable_file,variable_name,CG_resol,region,lev_count)
+         rv_data_out(time|:,lev|lev_count,lat|:,lon|:) = func_reduce_area(rv_tmp,flag_subset,set_lat_min,set_lat_max,set_lon_min,set_lon_max,3)
+         delete([/rv_tmp/])
+       end do
+   
+       ; Erase land if required ===========================;
+       rv_data_out@_FillValue = default_fillvalue("float")
+       if (flag_land) then
+   
+         land4d = conform(rv_data_out,land2d,(/2,3/))
+         rv_data_out_lf = where(land4d.ge.tol,rv_data_out@_FillValue,rv_data_out)
+   
+         copy_VarCoords(rv_data_out,rv_data_out_lf)
+         copy_VarAtts(  rv_data_out,rv_data_out_lf)
+   
+         poisson_grid_fill(rv_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+   
+         delete([/rv_data_out/])
+         rv_data_out = rv_data_out_lf
+         delete([/rv_data_out_lf,land4d/])
+   
+       end if
+   
+       ; smooth data to remove unresolved features
+       if flag_smooth then
+          rv_data_out_sm = smth9_Wrap(rv_data_out,0.5,0.25,False)
+          delete([/rv_data_out/])
+          rv_data_out = rv_data_out_sm
+          delete([/rv_data_out_sm/])
+       end if
+   
+       delete_VarAtts(rv_data_out,(/"param","standard_name","time","height"/))
+   
+       delete([/variable_file,variable_name/])
+   
+     ;==========================
+       print("rl calculation")
+   
+       filetype = "atm_3d"
+       variable_file = "rl"  ; name of file
+       variable_name = "rl"     ; name in file
+   
+       ; initialise: time, lev, lat, lon
+       rl_data_out = array_4d_out
+   
+       ; loop over vertical levels
+       do lev_count = 0,n_lev_in-1
+         rl_tmp = func_read_hires(generic_path,timestep_path,timestep_idx,time_in,filename,filetype,variable_file,variable_name,CG_resol,region,lev_count)
+         rl_data_out(time|:,lev|lev_count,lat|:,lon|:) = func_reduce_area(rl_tmp,flag_subset,set_lat_min,set_lat_max,set_lon_min,set_lon_max,3)
+         delete([/rl_tmp/])
+       end do
+   
+       ; Erase land if required ===========================;
+       rl_data_out@_FillValue = default_fillvalue("float")
+       if (flag_land) then
+   
+         land4d = conform(rl_data_out,land2d,(/2,3/))
+         rl_data_out_lf = where(land4d.ge.tol,rl_data_out@_FillValue,rl_data_out)
+   
+         copy_VarCoords(rl_data_out,rl_data_out_lf)
+         copy_VarAtts(  rl_data_out,rl_data_out_lf)
+   
+         poisson_grid_fill(rl_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+   
+         delete([/rl_data_out/])
+         rl_data_out = rl_data_out_lf
+         delete([/rl_data_out_lf,land4d/])
+   
+       end if
+   
+       ; smooth data to remove unresolved features
+       if flag_smooth then
+          rl_data_out_sm = smth9_Wrap(rl_data_out,0.5,0.25,False)
+          delete([/rl_data_out/])
+          rl_data_out = rl_data_out_sm
+          delete([/rl_data_out_sm/])
+       end if
+   
+       delete_VarAtts(rl_data_out,(/"param","standard_name","time","height"/))
+   
+       delete([/variable_file,variable_name/])
+   
+     ;==========================
+       print("ri calculation")
+   
+       filetype = "atm_3d"
+       variable_file = "ri"  ; name of file
+       variable_name = "ri"     ; name in file
+   
+       ; initialise: time, lev, lat, lon
+       ri_data_out = array_4d_out
+   
+       ; loop over vertical levels
+       do lev_count = 0,n_lev_in-1
+         ri_tmp = func_read_hires(generic_path,timestep_path,timestep_idx,time_in,filename,filetype,variable_file,variable_name,CG_resol,region,lev_count)
+         ri_data_out(time|:,lev|lev_count,lat|:,lon|:) = func_reduce_area(ri_tmp,flag_subset,set_lat_min,set_lat_max,set_lon_min,set_lon_max,3)
+         delete([/ri_tmp/])
+       end do
+   
+       ; Erase land if required ===========================;
+       ri_data_out@_FillValue = default_fillvalue("float")
+       if (flag_land) then
+   
+         land4d = conform(ri_data_out,land2d,(/2,3/))
+         ri_data_out_lf = where(land4d.ge.tol,ri_data_out@_FillValue,ri_data_out)
+   
+         copy_VarCoords(ri_data_out,ri_data_out_lf)
+         copy_VarAtts(  ri_data_out,ri_data_out_lf)
+   
+         poisson_grid_fill(ri_data_out_lf,is_cyclic,guess_type,nscan,eps,relc,opt)
+   
+         delete([/ri_data_out/])
+         ri_data_out = ri_data_out_lf
+         delete([/ri_data_out_lf,land4d/])
+   
+       end if
+   
+       ; smooth data to remove unresolved features
+       if flag_smooth then
+          ri_data_out_sm = smth9_Wrap(ri_data_out,0.5,0.25,False)
+          delete([/ri_data_out/])
+          ri_data_out = ri_data_out_sm
+          delete([/ri_data_out_sm/])
+       end if
+   
+       delete_VarAtts(ri_data_out,(/"param","standard_name","time","height"/))
+   
+       delete([/variable_file,variable_name/])
+   
+     ;==========================
+       print("rt calculation")
+   
+       rt_data_out = rv_data_out+rl_data_out+ri_data_out
+       copy_VarCoords(rv_data_out,rt_data_out)
+       rt_data_out@long_name="Total water content"
+       rt_data_out@units="kg kg-1"
+   
+       ; vertical coordinate. already on full levels
+    
+       add_to_file(fout,rv_data_out,"rv_t")
+       add_to_file(fout,rl_data_out,"rl_t")
+       add_to_file(fout,ri_data_out,"ri_t")
+       add_to_file(fout,rt_data_out,"rt_t")
+
+    else ; if not flag_accurate_r
+
+       ;==========================
+       print("rv/rl/ri/rt **estimation**")
+   
+       ; deduce specific mass of dry air
+       qd_data = 1 - qt_data_out
+   
+       ; convert to m.r.
+       rv_data_out = qv_data_out/qd_data
+       rl_data_out = ql_data_out/qd_data
+       ri_data_out = qi_data_out/qd_data
+       rt_data_out = qt_data_out/qd_data
+   
+       copy_VarCoords(qv_data_out,rv_data_out)
+       copy_VarCoords(qv_data_out,rl_data_out)
+       copy_VarCoords(qv_data_out,ri_data_out)
+       copy_VarCoords(qv_data_out,rt_data_out)
+   
+       delete([/qd_data/])
+   
+       rv_data_out@long_name = "Water vapour mixing ratio"
+       rv_data_out@units     = "kg kg-1"
+       rl_data_out@long_name = "Liquid water mixing ratio"
+       rl_data_out@units     = "kg kg-1"
+       ri_data_out@long_name = "Ice water mixing ratio"
+       ri_data_out@units     = "kg kg-1"
+       rt_data_out@long_name = "Total water mixing ratio"
+       rt_data_out@units     = "kg kg-1"
+
+       add_to_file(fout,rv_data_out,"rv_t")
+       add_to_file(fout,rl_data_out,"rl_t")
+       add_to_file(fout,ri_data_out,"ri_t")
+       add_to_file(fout,rt_data_out,"rt_t")
+ 
+    end if  ;flag_accurate_r
+  
+    ;=========
 
     add_to_file(fout,qv_data_out,"qv_t")
     add_to_file(fout,ql_data_out,"ql_t")
     add_to_file(fout,qi_data_out,"qi_t")
     add_to_file(fout,qt_data_out,"qt_t")
-;    add_to_file(fout,rv_data_out,"rv_t")
-;    add_to_file(fout,rl_data_out,"rl_t")
-;    add_to_file(fout,ri_data_out,"ri_t")
-;    add_to_file(fout,rt_data_out,"rt_t")
+
     delete([/qv_data_out,ql_data_out,qi_data_out/])
     delete([/qt_data_out/])
-;    delete([/rv_data_out,rl_data_out,ri_data_out,rt_data_out/])
+    delete([/rv_data_out,rl_data_out,ri_data_out,rt_data_out/])
+
+  ;==================================================================================
+  ; param 3c. thetal **estimate**
+
+    if (.not. flag_accurate_thetal) then
+
+       print("thetal estimate")
+
+       func_thetal(fout)
+
+    end if
 
   ;==================================================================================
   ; param 7. Advective Tendencies
   ;          Calculate this from the coarse grained T, U, V fields
 
-    func_advtend(fout, "temp_t", "temp_adv",              "Temperature large-scale advection","K s-1")
-    func_advtend(fout,"theta_t","theta_adv",    "Potential temperature large-scale advection","K s-1")
-    func_advtend(fout,    "u_t",    "u_adv",               "Zonal wind large-scale advection","m s-2")
-    func_advtend(fout,    "v_t",    "v_adv",          "Meridional wind large-scale advection","m s-2")
-    func_advtend(fout,   "qv_t",   "qv_adv",        "Specific humidity large-scale advection","kg kg-1 s-1")
-    func_advtend(fout,   "qt_t",   "qt_adv",      "Total water content large-scale advection","kg kg-1 s-1")
-;    func_advtend(fout,   "rv_t",   "rv_adv", "Water vapor mixing ratio large-scale advection","kg kg-1 s-1")
-;    func_advtend(fout,   "rt_t",   "rt_adv", "Total water mixing ratio large-scale advection","kg kg-1 s-1")
+    func_advtend(fout, "temp_t",   "temp_adv",              "Temperature large-scale advection","K s-1")
+    func_advtend(fout,"theta_t",  "theta_adv",    "Potential temperature large-scale advection","K s-1")
+    func_advtend(fout,"thetal_t","thetal_adv",    "Liquid water potential temperature large-scale advection","K s-1")
+    func_advtend(fout,    "u_t",      "u_adv",               "Zonal wind large-scale advection","m s-2")
+    func_advtend(fout,    "v_t",      "v_adv",          "Meridional wind large-scale advection","m s-2")
+    func_advtend(fout,   "qv_t",     "qv_adv",        "Specific humidity large-scale advection","kg kg-1 s-1")
+    func_advtend(fout,   "qt_t",     "qt_adv",      "Total water content large-scale advection","kg kg-1 s-1")
+    func_advtend(fout,   "rv_t",     "rv_adv", "Water vapor mixing ratio large-scale advection","kg kg-1 s-1")
+    func_advtend(fout,   "rt_t",     "rt_adv", "Total water mixing ratio large-scale advection","kg kg-1 s-1")
 
   ;==================================================================================
   ; param 8. "geostrophic winds" : calculate forcing term from 
@@ -966,8 +1237,10 @@ begin
     print("surface sensible heat flux calculation")
 
     filetype = "atm2_2d"
-    variable_file = "SHFL_S"  ; name of file
-    variable_name = "SHFL_S"  ; name in file
+    ;variable_file = "SHFL_S"  ; name of file
+    ;variable_name = "SHFL_S"  ; name in file
+    variable_file = "hfss"  ; name of file
+    variable_name = "hfss"  ; name in file
 
     ; initialise: time, lat, lon
     shfl_data_out = array_3d_out
@@ -1017,8 +1290,10 @@ begin
     print("surface latent heat flux calculation")
 
     filetype = "atm2_2d"
-    variable_file = "LHFL_S"  ; name of file
-    variable_name = "LHFL_S"  ; name in file
+    ;variable_file = "LHFL_S"  ; name of file
+    ;variable_name = "LHFL_S"  ; name in file
+    variable_file = "hfls"  ; name of file
+    variable_name = "hfls"  ; name in file
 
     ; initialise: time, lat, lon
     lhfl_data_out = array_3d_out
@@ -1068,8 +1343,10 @@ begin
     print("surface temperature calculation")
 
     filetype = "atm4_2d"
-    variable_file = "T_G"  ; name of file
-    variable_name = "T_G"  ; name in file
+    ;variable_file = "T_G"  ; name of file
+    ;variable_name = "T_G"  ; name in file
+    variable_file = "ts"  ; name of file
+    variable_name = "ts"  ; name in file
 
     ; initialise: time, lat, lon
     t_g_data_out = array_3d_out
@@ -1116,8 +1393,10 @@ begin
     print("surface pressure calculation")
 
     filetype = "atm2_2d"
-    variable_file = "PS"  ; name of file
-    variable_name = "PS"  ; name in file
+    ;variable_file = "PS"  ; name of file
+    ;variable_name = "PS"  ; name in file
+    variable_file = "ps"  ; name of file
+    variable_name = "ps"  ; name in file
 
     ; initialise: time, lat, lon
     ps_data_out = array_3d_out
@@ -1166,8 +1445,10 @@ begin
 
     ;;--- u momentum flux
     filetype = "atm4_2d"
-    variable_file = "UMFL_S"  ; name of file
-    variable_name = "UMFL_S"  ; name in file
+    ;variable_file = "UMFL_S"  ; name of file
+    ;variable_name = "UMFL_S"  ; name in file
+    variable_file = "tauu"  ; name of file
+    variable_name = "tauu"  ; name in file
   
     ; initialise: time, lat, lon
     umfl_data_out = array_3d_out
@@ -1204,8 +1485,10 @@ begin
 
     ;;--- v momentum flux
     filetype = "atm4_2d"
-    variable_file = "VMFL_S"  ; name of file
-    variable_name = "VMFL_S"  ; name in file
+    ;variable_file = "VMFL_S"  ; name of file
+    ;variable_name = "VMFL_S"  ; name in file
+    variable_file = "tauv"  ; name of file
+    variable_name = "tauv"  ; name in file
 
     ; initialise: time, lat, lon
     vmfl_data_out = array_3d_out
@@ -1260,8 +1543,10 @@ begin
 
     ;--- cloud cover
     filetype = "atm2_2d"
-    variable_file = "CLCT"  ; name of file
-    variable_name = "CLCT"  ; name in file
+    ;variable_file = "CLCT"  ; name of file
+    ;variable_name = "CLCT"  ; name in file
+    variable_file = "clt"          ; name of file
+    variable_name = "clt"          ; name in file
 
     ; initialise: time, lat, lon
     clct_data_out = array_3d_out
@@ -1303,8 +1588,10 @@ begin
 
     ;--- precip
     filetype = "atm2_2d"
-    variable_file = "TOT_PREC"  ; name of file
-    variable_name = "TOT_PREC"  ; name in file
+    ;variable_file = "TOT_PREC"  ; name of file
+    ;variable_name = "TOT_PREC"  ; name in file
+    variable_file = "pr"  ; name of file
+    variable_name = "pr"  ; name in file
 
     ; initialise: time, lat, lon
     tot_prec_data_out = array_3d_out
@@ -1340,14 +1627,21 @@ begin
     end if
 
     delete_VarAtts(tot_prec_data_out,(/"param","time"/))
+    ; inherited unit is dodgy, for some reason. This is an accumulated field
+    tot_prec_data_out@long_name = "Total precipitation (accumulated since parent model start)"
+    tot_prec_data_out@comment   = "Nb. parent ICON run starts on 1 August 2016"
+    tot_prec_data_out@units     = "kg/m2"
+
     add_to_file(fout,tot_prec_data_out,"tot_prec")
 
     delete([/variable_file,variable_name,tot_prec_data_out/])
 
     ;--- surface specific humidity
     filetype = "atm4_2d"
-    variable_file = "QV_S"  ; name of file
-    variable_name = "QV_S"  ; name in file
+    ;variable_file = "QV_S"  ; name of file
+    ;variable_name = "QV_S"  ; name in file
+    variable_file = "hus"  ; name of file
+    variable_name = "hus"  ; name in file
 
     ; initialise: time, lat, lon
     qv_s_data_out = array_3d_out
@@ -1400,7 +1694,7 @@ begin
     globalAtt@author = "Hannah Christensen, Univ. Oxford, UK"
 
     globalAtt@version = "Created on " + systemfunc("date")
-    globalAtt@format_version = "1.0"
+    globalAtt@format_version = "2.0"
     globalAtt@modifications = "n/a"
     globalAtt@script = ""
     globalAtt@comment = "    *******  MUMIP forcing file following pseudo-DEPHY format  *******"+\
@@ -1430,13 +1724,13 @@ begin
     ; advective tendencies supplied:
     globalAtt@adv_temp   = 1
     globalAtt@adv_theta  = 1
-    globalAtt@adv_thetal = 0
+    globalAtt@adv_thetal = 1
     globalAtt@adv_u      = 1
     globalAtt@adv_v      = 1
     globalAtt@adv_qv     = 1
     globalAtt@adv_qt     = 1
-    globalAtt@adv_rv     = 0
-    globalAtt@adv_rt     = 0
+    globalAtt@adv_rv     = 1
+    globalAtt@adv_rt     = 1
 
     ; radiation scheme should be activated: no tendencies supplied
     globalAtt@rad_temp   = 0
@@ -1455,11 +1749,11 @@ begin
     ; no separate nudging variables are provided, but users may nudge to the observed profiles if desired
     globalAtt@nudging_temp   = 3600
     globalAtt@nudging_theta  = 3600
-    globalAtt@nudging_thetal = 0
+    globalAtt@nudging_thetal = 3600
     globalAtt@nudging_qv     = 3600
     globalAtt@nudging_qt     = 3600
-    globalAtt@nudging_rv     = 0
-    globalAtt@nudging_rt     = 0
+    globalAtt@nudging_rv     = 3600
+    globalAtt@nudging_rt     = 3600
     globalAtt@nudging_u      = 3600
     globalAtt@nudging_v      = 3600
 
@@ -1471,10 +1765,12 @@ begin
     globalAtt@surfaceForcingWind = "z0/ustar"
 
     ; finally, save flags used when running this script
-    globalAtt@flag_land        = flag_land
-    globalAtt@flag_smooth      = flag_smooth
-    globalAtt@flag_interp_time = flag_interp_time
-    globalAtt@code_version     = version
+    globalAtt@flag_land            = flag_land
+    globalAtt@flag_smooth          = flag_smooth
+    globalAtt@flag_interp_time     = flag_interp_time
+    globalAtt@code_version         = version
+    globalAtt@flag_accurate_r      = flag_accurate_r
+    globalAtt@flag_accurate_thetal = flag_accurate_thetal
 
     ; save global attributes to file
     fileattdef(fout, globalAtt )

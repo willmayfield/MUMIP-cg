@@ -159,19 +159,22 @@ begin
     vg_out =  press_gradx_out/f_cori
     ug_out = -press_grady_out/f_cori
 
-    copy_VarCoords(pres_data_out,ug_out)
-    copy_VarCoords(pres_data_out,vg_out)
-    copy_VarAtts(pres_data_out,ug_out)
-    copy_VarAtts(pres_data_out,vg_out)
-    ug_out@long_name = "Geostrophic zonal wind"
-    ug_out@units     = "m/s"
-    vg_out@long_name = "Geostrophic meridional wind"
-    vg_out@units     = "m/s"
+    vg_out_flt = tofloat(vg_out)
+    ug_out_flt = tofloat(ug_out)
 
-    add_to_file(fout,ug_out   , "ug")
-    add_to_file(fout,vg_out   , "vg")
+    copy_VarCoords(pres_data_out,ug_out_flt)
+    copy_VarCoords(pres_data_out,vg_out_flt)
+    copy_VarAtts(pres_data_out,ug_out_flt)
+    copy_VarAtts(pres_data_out,vg_out_flt)
+    ug_out_flt@long_name = "Geostrophic zonal wind"
+    ug_out_flt@units     = "m/s"
+    vg_out_flt@long_name = "Geostrophic meridional wind"
+    vg_out_flt@units     = "m/s"
 
-    delete([/ug_out,vg_out,f_cori/])
+    add_to_file(fout,ug_out_flt   , "ug")
+    add_to_file(fout,vg_out_flt   , "vg")
+
+    delete([/ug_out,vg_out,ug_out_flt,vg_out_flt,f_cori/])
 
     return(rho_sfc)
 

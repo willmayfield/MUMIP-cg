@@ -35,6 +35,20 @@ begin
 
   ;  Input variable dimensions: (time, latitude, longitude) ;
      in_file        = addfile(data_path,"r")
+
+     ; data check
+     if (t_count.eq.0) then
+        tmptmp = in_file->$variable_name$
+        ; check dimension time
+        tmpsize = dimsizes(tmptmp)
+        ;print(tmpsize)
+        if (tmpsize(0).ne.8)
+           print(" ERROR: UNEXPECTED NUMBER OF INPUT TIME SLICES")
+           tmp = nope
+        end if
+        delete([/tmptmp, tmpsize/])
+     end if
+
      if (lev_count.eq.999) then
         ; 2D field: only one level available
         in_data_tmp    = in_file->$variable_name$(timestep_idx(t_count),:,:)
