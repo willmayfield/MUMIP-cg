@@ -16,6 +16,25 @@ Changes for v2.0
 - all variables saved as floats not double
        Changes made in func_advtend.ncl and func_grostrophic.ncl
 
+- New derived variables: theta_l, mixing ratios
+       Can either be computed accurately using raw ICON data before coarsening,
+       or approximately within ncl scripts using low-resolution state variables
+        - To do former, run proc_ICON_derived.ksh and proc_ICON_derived_2.ksh
+       prior to running ncl scripts. Then in ncl scripts, set 
+       flag_accurate_r = True and flag_accurate_thetal = True
+        - To do latter, in ncl scripts, set 
+       flag_accurate_r = False and flag_accurate_thetal = False
+
+- New output: advective tendencies
+       Advective tendencies for theta_l and mixing ratios computed and archived.
+
+- Assorted changes to run on Levante as opposed to Mistral
+       Changes in GRIB variable interpretation file on Levante, led to
+       changes in variable names
+
+- Memory issues improved in preprocessing scripts
+       For derived variables, compute fields one model level at a time.
+
 
 ====
 
