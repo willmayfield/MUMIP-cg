@@ -1,5 +1,10 @@
 README.txt
 
+Xia Sun, 13 September 2023
+
+NCL files to produce DEPHY-standard SCM input for the MUMIP project using Unifed Forecast System (UFS) outputs
+
+
 Hannah Christensen, 5 September 2022
 
 NCL files to produce DEPHY-standard SCM input for the MUMIP project

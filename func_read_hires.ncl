@@ -6,12 +6,12 @@
 ;===============================================================
 
 function func_read_hires(generic_path:string,timestep_path:integer,timestep_idx:integer,time_in:double,\
-                            filename:string,filetype:string,variable_file:string,variable_name:string,\
-                            CG_resol:string,region:string,lev_count:integer)
+                            filename:string,variable_file:string,variable_name:string,\
+                            CG_resol:string,UFS_exp:string,region:string,lev_count:integer)
 
 
-local generic_path,timestep_path,timestep_idx,time_in,filename,filetype,variable_file,variable_name,\
-      CG_resol,region,lev_count,no_time_slices,t_count,data_path_matr,data_path,in_file,\
+local generic_path,timestep_path,timestep_idx,time_in,filename,variable_file,variable_name,\
+      CG_resol,UFS_exp,region,lev_count,no_time_slices,t_count,data_path_matr,data_path,in_file,\
       in_data_tmp,var_dims,data_size,data_size_new,in_data,i_dim
 
 
@@ -26,12 +26,14 @@ begin
 
   do t_count = 0,dimsizes(timestep_path)-1
 
-     if (filetype.eq."atm2_2d").or.(filetype.eq."atm4_2d") then
-         data_path_matr = (/generic_path,CG_resol,"/",region,"/",filename,CG_resol,"_",filetype,"_ml_",tostring(timestep_path(t_count)),"T000000Z_",region,".nc"/)
-     else
-         data_path_matr = (/generic_path,CG_resol,"/",region,"/",filename,CG_resol,"_",filetype,"_",variable_file,"_ml_",tostring(timestep_path(t_count)),"T000000Z_",region,".nc"/)
-     end if
+     ; if (filetype.eq."atm2_2d").or.(filetype.eq."atm4_2d") then
+     ;     data_path_matr = (/generic_path,CG_resol,"/",region,"/",filename,CG_resol,"_",filetype,"_ml_",tostring(timestep_path(t_count)),"T000000Z_",region,".nc"/)
+     ; else
+     ;     data_path_matr = (/generic_path,CG_resol,"/",region,"/",filename,CG_resol,"_",filetype,"_",variable_file,"_ml_",tostring(timestep_path(t_count)),"T000000Z_",region,".nc"/)
+     ; end if
+     data_path_matr = (/generic_path,"/ufs_",CG_resol,"/",region,"/",filename,tostring(timestep_path(t_count)),".",CG_resol,".",variable_file,".",UFS_exp,".",region,".nc"/)
      data_path      = str_concat(data_path_matr)
+     print(data_path_matr)
 
   ;  Input variable dimensions: (time, latitude, longitude) ;
      in_file        = addfile(data_path,"r")
@@ -44,7 +46,7 @@ begin
         ;print(tmpsize)
         if (tmpsize(0).ne.8)
            print(" ERROR: UNEXPECTED NUMBER OF INPUT TIME SLICES")
-           tmp = nope
+           tmp = "nope"
         end if
         delete([/tmptmp, tmpsize/])
      end if

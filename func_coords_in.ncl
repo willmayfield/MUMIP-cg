@@ -3,8 +3,8 @@
 ;===============================================================
 
 function func_coords_in(generic_path:string,timestep_path:integer,timestep_idx:integer,time_ref:double,\
-                            filename:string,filetype:string,variable:string,\
-                            CG_resol:string,region:string)
+                            filename:string,variable:string,\
+                            CG_resol:string,UFS_exp:string,region:string)
 
 local generic_path,timestep_path,timestep_idx,time_ref,filename,variable,\
       t_count,data_path_matr,data_path,in_file,\
@@ -22,7 +22,10 @@ begin
 
    t_count = 0
 
-   data_path_matr = (/generic_path,CG_resol,"/",region,"/",filename,CG_resol,"_",filetype,"_",variable,"_ml_",tostring(timestep_path(t_count)),"T000000Z_",region,".nc"/)
+   ; data_path_matr = (/generic_path,CG_resol,"/",region,"/",filename,CG_resol,"_",filetype,"_",variable,"_ml_",tostring(timestep_path(t_count)),"T000000Z_",region,".nc"/)
+
+   data_path_matr = (/generic_path,"/ufs_",CG_resol,"/",region,"/",filename,tostring(timestep_path(t_count)),".",CG_resol,".",variable,".",UFS_exp,".",region,".nc"/)
+
    data_path      = str_concat(data_path_matr)
 
 ;; Input variable dimensions: (time, latitude, longitude) ;
@@ -31,7 +34,7 @@ begin
 ;; Read in coordinate variables from this file
    lon_in = in_file->lon
    lat_in = in_file->lat
-   lev_in = in_file->height
+   lev_in = in_file->lev
  
    lev_in!0 = "nlev"
 
@@ -41,7 +44,11 @@ begin
 
    do t_count = 0,n_time_in-1
 
-      data_path_matr = (/generic_path,CG_resol,"/",region,"/",filename,CG_resol,"_",filetype,"_",variable,"_ml_",tostring(timestep_path(t_count)),"T000000Z_",region,".nc"/)
+      ; data_path_matr = (/generic_path,CG_resol,"/",region,"/",filename,CG_resol,"_",filetype,"_",variable,"_ml_",tostring(timestep_path(t_count)),"T000000Z_",region,".nc"/)
+ 
+      data_path_matr = (/generic_path,"/ufs_",CG_resol,"/",region,"/",filename,tostring(timestep_path(t_count)),".",CG_resol,".",variable,".",UFS_exp,".",region,".nc"/)
+
+      print(data_path_matr)
       data_path      = str_concat(data_path_matr)
 
       ;; Input variable dimensions: (time, latitude, longitude) ;
@@ -74,7 +81,7 @@ begin
    time_in!0 = "time"
    time_in&time = time_in
 
-   return([/ lon_in , lat_in , lev_in , time_in /])
+   return([/lon_in , lat_in , lev_in , time_in/])
 
 end
 
