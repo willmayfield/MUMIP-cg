@@ -17,7 +17,7 @@
 ;================================================================================
 
 ; Revised by Xia Sun, Sep 2023
-; usage: ncl coarsen_ufs_manyt.ncl datein=yyyymmdd hourin=i
+; usage: ncl coarsen_ufs_t.ncl
 
 load "$NCARG_ROOT/lib/ncarg/nclscripts/csm/gsn_code.ncl"
 load "$NCARG_ROOT/lib/ncarg/nclscripts/csm/contributed.ncl"
